@@ -298,12 +298,107 @@
             .content { padding-top: 70px; }
         }
 
+        /* ================= SEARCH ================= */
+        .sidebar-search {
+            padding: 10px 12px;
+            border-bottom: 1px solid #2c5282;
+            background: #152c4e;
+            position: relative;
+            z-index: 10;
+        }
+        .search-input {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid #2c5282;
+            border-radius: 6px;
+            background: #0f2442;
+            color: #e2e8f0;
+            font-family: inherit;
+            font-size: .85rem;
+            outline: none;
+            transition: border-color .15s ease, box-shadow .15s ease;
+        }
+        .search-input::placeholder { color: #7a94b8; }
+        .search-input:focus {
+            border-color: #63b3ed;
+            box-shadow: 0 0 0 2px rgba(99, 179, 237, .3);
+        }
+        .search-results {
+            display: none;
+            position: absolute;
+            left: 8px;
+            right: 8px;
+            top: calc(100% - 4px);
+            max-height: 45vh;
+            overflow-y: auto;
+            background: #0f2442;
+            border: 1px solid #2c5282;
+            border-radius: 6px;
+            font-size: .78rem;
+            box-shadow: 0 6px 16px rgba(0, 0, 0, .5);
+            z-index: 20;
+            scrollbar-width: thin;
+            scrollbar-color: #2c5282 #0f2442;
+        }
+        .search-results::-webkit-scrollbar { width: 8px; }
+        .search-results::-webkit-scrollbar-thumb { background: #2c5282; border-radius: 4px; }
+        .search-results.show { display: block; }
+        .search-result {
+            display: block;
+            padding: 7px 10px;
+            color: #cbd5e0;
+            text-decoration: none;
+            border-bottom: 1px solid rgba(255, 255, 255, .05);
+            cursor: pointer;
+            line-height: 1.35;
+        }
+        .search-result:last-child { border-bottom: none; }
+        .search-result:hover,
+        .search-result.active {
+            background: rgba(49, 130, 206, .35);
+            color: #ffffff;
+        }
+        .search-result .sr-title {
+            display: block;
+            font-weight: 600;
+            color: #ffffff;
+            margin-bottom: 2px;
+        }
+        .search-result .sr-snippet {
+            display: block;
+            font-size: .72rem;
+            color: #a0aec0;
+            word-break: break-word;
+        }
+        .search-result mark {
+            background: #ecc94b;
+            color: #1a202c;
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+        .search-empty {
+            padding: 12px 10px;
+            color: #a0aec0;
+            font-style: italic;
+            text-align: center;
+        }
+
+        /* Highlight on the page itself */
+        mark.search-hit {
+            background: #fefcbf;
+            color: inherit;
+            padding: 0 2px;
+            border-radius: 2px;
+            box-shadow: 0 0 0 1px #ecc94b;
+        }
+
         /* ================= PRINT / PDF ================= */
         @media print {
             .sidebar,
             .sidebar-toggle,
             .sidebar-backdrop,
-            .sidebar-actions { display: none !important; }
+            .sidebar-actions,
+            .sidebar-search { display: none !important; }
 
             body { padding-left: 0 !important; }
             .content { max-width: 100%; padding: 0; }
@@ -319,6 +414,13 @@
 
             a { color: #000000; text-decoration: none; }
             pre { border: 1px solid #999; }
+
+            mark.search-hit {
+                background: transparent !important;
+                color: inherit !important;
+                box-shadow: none !important;
+                padding: 0 !important;
+            }
         }
     </style>
 </head>
@@ -333,6 +435,20 @@
         <div class="sidebar-header">
             <h2>WEB DESIGN &amp; TECHNOLOGY</h2>
             <p>23 Modules · Click any topic to jump</p>
+        </div>
+        <div class="sidebar-search">
+            <input type="search"
+                   id="searchInput"
+                   class="search-input"
+                   placeholder="Search notes…  (Ctrl+K)"
+                   aria-label="Search lecture notes"
+                   aria-controls="searchResults"
+                   aria-autocomplete="list"
+                   autocomplete="off">
+            <div class="search-results"
+                 id="searchResults"
+                 role="listbox"
+                 aria-label="Search results"></div>
         </div>
         <nav class="sidebar-nav" id="sidebarNav" aria-label="Course contents"></nav>
         <div class="sidebar-actions">
@@ -372,6 +488,7 @@
             <li><strong>🖨 Print / Save as PDF</strong> — opens the browser's print dialog; choose “Save as PDF” as the destination for a clean printable copy (sidebar is hidden automatically).</li>
             <li><strong>⬇ Download PDF</strong> — generates a real <code>.pdf</code> file directly from the page. The document is split into small chunks and merged, which is what makes the PDF work reliably for a file this large. A progress indicator shows the current step; it can take up to a minute. If your browser is offline and the PDF libraries cannot load, it automatically falls back to the print dialog.</li>
         </ul>
+        <p>Use the <strong>Search</strong> box at the top of the sidebar (or press <kbd>Ctrl</kbd>+<kbd>K</kbd>) to find any term across all modules. Matches are highlighted on the page when you select a result.</p>
     </div>
 
     <h2>Table of Contents</h2>
@@ -4190,6 +4307,308 @@ if (button &amp;&amp; output) {
                 }
             });
         }
+    })();
+    </script>
+
+    <script>
+    /* ================= SEARCH FEATURE ================= */
+    (function () {
+        "use strict";
+
+        var searchInput  = document.getElementById("searchInput");
+        var resultsBox   = document.getElementById("searchResults");
+        if (!searchInput || !resultsBox) return;
+
+        var content  = document.querySelector(".content");
+        if (!content) return;
+
+        var sidebar  = document.getElementById("sidebar");
+        var backdrop = document.getElementById("sidebarBackdrop");
+        var toggle   = document.getElementById("sidebarToggle");
+
+        var index        = [];   // { element, text, lower, title }
+        var results      = [];   // { element }
+        var activeIndex  = -1;
+        var highlights   = [];
+        var debounceTimer = null;
+
+        var CANDIDATE_SELECTOR =
+            "h1, h2, h3, h4, p, dt, dd, pre, th, td, figcaption, caption, blockquote, li";
+
+        /* ---------- Build the search index once ---------- */
+        function buildIndex() {
+            var candidates = content.querySelectorAll(CANDIDATE_SELECTOR);
+            for (var i = 0; i < candidates.length; i++) {
+                var el = candidates[i];
+
+                if (el.tagName !== "LI" && el.querySelector(CANDIDATE_SELECTOR)) {
+                    continue; // index the innermost block only
+                }
+                if (el.tagName === "LI" &&
+                    el.querySelector("ul, ol, p, div, pre, table, blockquote")) {
+                    continue; // avoid duplicate/nested list text
+                }
+
+                var text = (el.textContent || "").replace(/\s+/g, " ").trim();
+                if (text.length < 3) continue;
+
+                index.push({
+                    element: el,
+                    text:    text,
+                    lower:   text.toLowerCase(),
+                    title:   findContextHeading(el) || text.slice(0, 80)
+                });
+            }
+        }
+
+        function findContextHeading(el) {
+            var node = el, fallback = null;
+            while (node && node !== content) {
+                var prev = node.previousElementSibling;
+                while (prev) {
+                    var tag = prev.tagName;
+                    if (tag === "H1" || tag === "H2" || tag === "H3" || tag === "H4") {
+                        if (tag === "H1") return prev.textContent.trim();
+                        if (!fallback) fallback = prev.textContent.trim();
+                    } else {
+                        var innerHs = prev.querySelectorAll("h1, h2, h3, h4");
+                        for (var k = innerHs.length - 1; k >= 0; k--) {
+                            if (innerHs[k].tagName === "H1") return innerHs[k].textContent.trim();
+                            if (!fallback) fallback = innerHs[k].textContent.trim();
+                        }
+                    }
+                    prev = prev.previousElementSibling;
+                }
+                node = node.parentElement;
+            }
+            return fallback;
+        }
+
+        /* ---------- Helpers ---------- */
+        function escapeRegExp(s) {
+            return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        }
+        function escapeHtml(s) {
+            return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+        function highlightSnippetHtml(text, term) {
+            var escText = escapeHtml(text);
+            var escTerm = escapeHtml(term);
+            if (!escTerm) return escText;
+            var re = new RegExp("(" + escapeRegExp(escTerm) + ")", "gi");
+            return escText.replace(re, "<mark>$1</mark>");
+        }
+
+        /* ---------- Page highlighting ---------- */
+        function clearHighlights() {
+            for (var i = 0; i < highlights.length; i++) {
+                var m = highlights[i];
+                if (m.parentNode) {
+                    m.parentNode.replaceChild(document.createTextNode(m.textContent), m);
+                    m.parentNode.normalize();
+                }
+            }
+            highlights = [];
+        }
+
+        function highlightInElement(root, term) {
+            if (!term) return;
+            var re = new RegExp(escapeRegExp(term), "gi");
+            var walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+                acceptNode: function (node) {
+                    var p = node.parentNode;
+                    while (p) {
+                        if (p.tagName === "SCRIPT" || p.tagName === "STYLE") return NodeFilter.FILTER_REJECT;
+                        if (p.classList && p.classList.contains("search-hit")) return NodeFilter.FILTER_REJECT;
+                        p = p.parentNode;
+                    }
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            });
+            var textNodes = [];
+            var n;
+            while ((n = walker.nextNode())) textNodes.push(n);
+
+            textNodes.forEach(function (node) {
+                var text = node.nodeValue;
+                if (!text) return;
+                re.lastIndex = 0;
+                if (!re.test(text)) return;
+                re.lastIndex = 0;
+
+                var frag = document.createDocumentFragment();
+                var last = 0, m;
+                while ((m = re.exec(text)) !== null) {
+                    if (m.index > last) frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+                    var mark = document.createElement("mark");
+                    mark.className = "search-hit";
+                    mark.textContent = m[0];
+                    frag.appendChild(mark);
+                    highlights.push(mark);
+                    last = m.index + m[0].length;
+                    if (m[0].length === 0) re.lastIndex++;
+                }
+                if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+                node.parentNode.replaceChild(frag, node);
+            });
+        }
+
+        /* ---------- Selection / scrolling ---------- */
+        function setActive(i) {
+            var items = resultsBox.querySelectorAll(".search-result");
+            if (!items.length) return;
+            activeIndex = (i + items.length) % items.length;
+            for (var k = 0; k < items.length; k++) {
+                items[k].classList.toggle("active", k === activeIndex);
+            }
+            var active = items[activeIndex];
+            if (active && active.scrollIntoView) active.scrollIntoView({ block: "nearest" });
+        }
+
+        function closeMobileSidebar() {
+            if (sidebar)  sidebar.classList.remove("open");
+            if (backdrop) backdrop.classList.remove("show");
+            if (toggle)   toggle.setAttribute("aria-expanded", "false");
+        }
+
+        function selectResult(idx) {
+            var r = results[idx];
+            if (!r) return;
+            clearHighlights();
+            var el = r.element;
+            var top = el.getBoundingClientRect().top + window.pageYOffset - 90;
+            window.scrollTo({ top: top, behavior: "smooth" });
+            highlightInElement(el, searchInput.value.trim());
+            if (window.innerWidth <= 1024) closeMobileSidebar();
+        }
+
+        /* ---------- Run the search ---------- */
+        function runSearch(term) {
+            resultsBox.innerHTML = "";
+            results = [];
+            activeIndex = -1;
+
+            var trimmed = term.trim();
+            if (trimmed.length < 2) {
+                resultsBox.classList.remove("show");
+                return;
+            }
+
+            var lower = trimmed.toLowerCase();
+            var matches = [];
+            for (var i = 0; i < index.length; i++) {
+                var pos = index[i].lower.indexOf(lower);
+                if (pos !== -1) matches.push({ item: index[i], pos: pos });
+            }
+
+            if (!matches.length) {
+                var empty = document.createElement("div");
+                empty.className = "search-empty";
+                empty.textContent = "No matches for \u201C" + trimmed + "\u201D";
+                resultsBox.appendChild(empty);
+                resultsBox.classList.add("show");
+                return;
+            }
+
+            matches = matches.slice(0, 40);
+
+            matches.forEach(function (m, i) {
+                var text  = m.item.text;
+                var start = Math.max(0, m.pos - 30);
+                var end   = Math.min(text.length, m.pos + lower.length + 60);
+                var snippet = (start > 0 ? "\u2026 " : "") +
+                              text.slice(start, end) +
+                              (end < text.length ? " \u2026" : "");
+
+                var a = document.createElement("a");
+                a.className = "search-result";
+                a.href = "#";
+                a.dataset.index = String(i);
+                a.setAttribute("role", "option");
+
+                var title = document.createElement("span");
+                title.className = "sr-title";
+                title.innerHTML = highlightSnippetHtml(m.item.title || "Match", trimmed);
+
+                var snip = document.createElement("span");
+                snip.className = "sr-snippet";
+                snip.innerHTML = highlightSnippetHtml(snippet, trimmed);
+
+                a.appendChild(title);
+                a.appendChild(snip);
+                resultsBox.appendChild(a);
+                results.push({ element: m.item.element });
+            });
+
+            resultsBox.classList.add("show");
+        }
+
+        /* ---------- Event wiring ---------- */
+        searchInput.addEventListener("input", function () {
+            clearHighlights();
+            clearTimeout(debounceTimer);
+            var val = searchInput.value;
+            debounceTimer = setTimeout(function () { runSearch(val); }, 120);
+        });
+
+        searchInput.addEventListener("search", function () {
+            if (!searchInput.value) {
+                resultsBox.classList.remove("show");
+                clearHighlights();
+            }
+        });
+
+        searchInput.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") {
+                e.preventDefault();
+                searchInput.value = "";
+                resultsBox.classList.remove("show");
+                clearHighlights();
+                searchInput.blur();
+                return;
+            }
+            if (!resultsBox.classList.contains("show")) return;
+            if (e.key === "ArrowDown") {
+                e.preventDefault(); setActive(activeIndex + 1);
+            } else if (e.key === "ArrowUp") {
+                e.preventDefault(); setActive(activeIndex - 1);
+            } else if (e.key === "Enter") {
+                e.preventDefault();
+                if (activeIndex >= 0)        selectResult(activeIndex);
+                else if (results.length)     selectResult(0);
+            }
+        });
+
+        resultsBox.addEventListener("click", function (e) {
+            var item = e.target.closest(".search-result");
+            if (!item) return;
+            e.preventDefault();
+            var idx = parseInt(item.dataset.index, 10);
+            if (!isNaN(idx)) selectResult(idx);
+        });
+
+        resultsBox.addEventListener("mouseover", function (e) {
+            var item = e.target.closest(".search-result");
+            if (!item) return;
+            var idx = parseInt(item.dataset.index, 10);
+            if (!isNaN(idx) && idx !== activeIndex) setActive(idx);
+        });
+
+        /* Ctrl/Cmd + K opens search (and the sidebar on mobile) */
+        document.addEventListener("keydown", function (e) {
+            if ((e.ctrlKey || e.metaKey) && e.key && e.key.toLowerCase() === "k") {
+                e.preventDefault();
+                if (window.innerWidth <= 1024) {
+                    if (sidebar)  sidebar.classList.add("open");
+                    if (backdrop) backdrop.classList.add("show");
+                    if (toggle)   toggle.setAttribute("aria-expanded", "true");
+                }
+                searchInput.focus();
+                searchInput.select();
+            }
+        });
+
+        buildIndex();
     })();
     </script>
 
